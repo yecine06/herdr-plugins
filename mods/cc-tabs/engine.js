@@ -320,7 +320,10 @@ export class Engine {
     // the classifier needs neither (it runs no tools). A login that lives in settings
     // (apiKeyHelper, env) needs them though: on an auth error the call is made once more with
     // settings on, and that is remembered.
-    const base = ["-p", "--no-session-persistence", "--model", this.config?.model ?? "haiku", "--output-format", "json", "--json-schema", SCHEMA, "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'];
+    // The prompt carries untrusted terminal text: the classifier gets no tools at all, whatever
+    // the user's settings allow, so injected instructions can only change its JSON answer.
+    // Variadic flags (--tools, --mcp-config) come before a single-value one, or they swallow the prompt.
+    const base = ["-p", "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--no-session-persistence", "--model", this.config?.model ?? "haiku", "--output-format", "json", "--json-schema", SCHEMA, "--permission-mode", "default"];
     const lean = !this._claudeNeedsSettings;
     let r = await exec("claude", [...base, ...(lean ? ["--setting-sources", ""] : []), prompt]);
     const text = `${r.stderr} ${r.stdout}`;
