@@ -19,7 +19,7 @@ function find(node, id) {
   return null;
 }
 
-// Same rule as cc-task.mjs: the Linear issue on the branch, else the space and tab.
+// Same rule as cc-task.mjs: the ClickUp task on the branch, else the space and tab.
 function keyOf(branch, space, tab) {
   const issues = shared("cc.linear")?.issues ?? [];
   const b = (branch ?? "").toLowerCase();

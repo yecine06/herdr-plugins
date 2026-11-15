@@ -23,26 +23,10 @@ function find(node, id) {
   return null;
 }
 
-// Linear goes through the claude.ai connector in a headless claude run, so it's slow and costs a little:
+// "linear" is the upstream name kept for the task source; here it reads ClickUp through clickup-cli,
 // on settings' schedule (linear.everyMin, linear.hours), or when asked (cc.linear.request).
-const LINEAR_TIMEOUT = 240_000;
-const LINEAR_READ = ["ToolSearch", "mcp__claude_ai_Linear__list_issues", "mcp__claude_ai_Linear__get_issue", "mcp__claude_ai_Linear__list_teams", "mcp__claude_ai_Linear__get_user", "mcp__claude_ai_Linear__whoami"];
-const LINEAR_WRITE = ["ToolSearch", "mcp__claude_ai_Linear__get_issue", "mcp__claude_ai_Linear__list_issue_statuses", "mcp__claude_ai_Linear__save_issue"];
-const LINEAR_SCHEMA = JSON.stringify({
-  type: "object", required: ["issues", "error", "connected"],
-  properties: {
-    error: { type: "string" }, connected: { type: "boolean" },
-    issues: { type: "array", items: { type: "object", required: ["identifier", "title", "state", "stateType", "url"], properties: {
-      identifier: { type: "string" }, title: { type: "string" }, state: { type: "string" }, stateType: { type: "string" },
-      priority: { type: "number" }, url: { type: "string" }, branchName: { type: "string" }, description: { type: "string" },
-      cycle: { type: "string" }, project: { type: "string" } } } },
-  },
-});
-const LINEAR_PROMPT = `List every Linear issue assigned to me that is not completed or canceled. Load the Linear tools with ToolSearch first.
-For each issue: identifier, title, state name, state type (backlog, unstarted, started or triage), priority number (0 none, 1 urgent, 2 high, 3 medium, 4 low), url, gitBranchName as branchName, the first 600 characters of the description, cycle name, project name.
-Read only: never create, change or comment on anything.
-connected: false when no Linear tools are available or they say I need to sign in; then return an empty list.
-If the Linear tools are there but keep failing, return an empty list and one short reason in error; otherwise error is "".`;
+const LINEAR_TIMEOUT = 120_000;
+const clickup = () => `${appHome()}/mods/cc-status/clickup.mjs`;
 
 const REVIEWS_EVERY = 5 * 60_000;
 const DEFAULT_BRANCHES = new Set(["main", "master", "develop", "trunk"]);
@@ -374,26 +358,19 @@ export default class CcStatus extends View {
     });
   }
 
-  // forced: you asked (panel, Check again, status bar), so it runs even when Claude Code says Linear needs a sign-in.
-  linear(cx, forced = false) {
+  // ClickUp tasks through clickup-cli (mods/cc-status/clickup.mjs): free, so forced only matters for the schedule.
+  linear(cx, _forced = false) {
     if (this.linearBusy) return;
     this.linearBusy = true;
     this.linearStarted = Date.now();
     cx.spawn(async (cx) => {
       const prev = shared("cc.linear") ?? {};
-      if (!forced && await needsAuth("Linear")) {
-        setShared("cc.linear", { ...prev, running: false, notConnected: true, error: null, failedAt: Date.now() });
-        this.linearBusy = false;
-        return;
-      }
       setShared("cc.linear", { ...prev, running: true });
       try {
-        const r = await this.claude(LINEAR_PROMPT, LINEAR_READ, ["--json-schema", LINEAR_SCHEMA], LINEAR_TIMEOUT, this.settings.linear.model);
-        const out = JSON.parse(r.stdout || "{}");
-        const s = out.structured_output;
-        if (!s) throw new Error(String(out.result || r.stderr || `claude exited ${r.code}`).split("\n")[0]);
+        const r = await exec("node", [clickup(), "list"], { timeout: LINEAR_TIMEOUT });
+        const s = JSON.parse(r.stdout || "{}");
         if (s.connected === false) setShared("cc.linear", { ...prev, running: false, notConnected: true, error: null, failedAt: Date.now() });
-        else if (s.error) setShared("cc.linear", { ...prev, running: false, notConnected: false, error: s.error, failedAt: Date.now() });
+        else if (s.error || r.code !== 0) setShared("cc.linear", { ...prev, running: false, notConnected: false, error: s.error || r.stderr.trim().split("\n")[0] || `exit ${r.code}`, failedAt: Date.now() });
         else setShared("cc.linear", { issues: s.issues, at: Date.now(), running: false, notConnected: false, error: null });
       } catch (e) {
         setShared("cc.linear", { ...prev, running: false, error: String(e?.message ?? e).slice(0, 160), failedAt: Date.now() });
@@ -404,14 +381,14 @@ export default class CcStatus extends View {
     });
   }
 
-  // Start from issue asks for this; the dialog closes before a headless run could finish.
-  moveToStarted(cx, identifier) {
+  // Start from issue asks for this; the dialog closes before the update finishes.
+  moveToStarted(cx, identifier, taskId) {
     cx.spawn(async (cx) => {
-      const prompt = `Move Linear issue ${identifier} to its team's "In Progress" state (or the team's first state of type started). Change nothing else: no comments, no other fields. Reply with one short sentence.`;
-      const r = await this.claude(prompt, LINEAR_WRITE, [], 180_000).catch((e) => ({ code: 1, stdout: "", stderr: String(e) }));
-      let ok = r.code === 0, text = "";
-      try { const o = JSON.parse(r.stdout); ok = ok && !o.is_error; text = o.result ?? ""; } catch { ok = false; }
-      notify({ title: ok ? `${identifier} moved to In Progress` : `Couldn't move ${identifier}`, body: ok ? undefined : (text || r.stderr || "").slice(0, 160), level: ok ? "success" : "warning" });
+      const r = await exec("node", [clickup(), "start", taskId ?? identifier], { timeout: 60_000 }).catch((e) => ({ code: 1, stdout: "", stderr: String(e) }));
+      let o = {};
+      try { o = JSON.parse(r.stdout); } catch { /* reported below */ }
+      const ok = r.code === 0 && o.ok;
+      notify({ title: ok ? `${identifier} moved to ${o.status}` : `Couldn't move ${identifier}`, body: ok ? undefined : (o.error || r.stderr || "").slice(0, 160), level: ok ? "success" : "warning" });
       this.linear(cx);
     });
   }
@@ -432,7 +409,7 @@ export default class CcStatus extends View {
     }
     const request = shared("cc.linear.request") ?? 0, move = shared("cc.linear.move");
     if (request > this.handled.request) { this.handled.request = request; this.linear(cx, true); }
-    if (move?.at > this.handled.move) { this.handled.move = move.at; this.moveToStarted(cx, move.identifier); }
+    if (move?.at > this.handled.move) { this.handled.move = move.at; this.moveToStarted(cx, move.identifier, move.taskId); }
     const ureq = shared("cc.usage.request") ?? 0;
     if (ureq > (this.handled.usage ?? 0)) { this.handled.usage = ureq; this.usage(cx, true); }
     const streq = shared("cc.standup.request") ?? 0;
@@ -543,7 +520,7 @@ export default class CcStatus extends View {
     const label = (icon, text) => h_flex().gap(6).items_center().child(svg(`mods/workspace-chrome/${icon}.svg`).size(13)).child(text);
     const sync = this.error ? `GitHub: ${this.error}` : this.busy ? "GitHub: checking…" : this.lastRun ? `GitHub ${ago(this.lastRun)}` : "GitHub";
     const lin = shared("cc.linear") ?? {};
-    const linSync = lin.running ? "Linear: checking…" : lin.notConnected ? "Linear: not connected" : lin.error ? "Linear: failed" : lin.at ? `Linear ${ago(lin.at)}` : "Linear";
+    const linSync = lin.running ? "ClickUp: checking…" : lin.notConnected ? "ClickUp: not connected" : lin.error ? "ClickUp: failed" : lin.at ? `ClickUp ${ago(lin.at)}` : "ClickUp";
     const sl = shared("cc.slack") ?? {};
     const asks = (sl.items ?? []).filter((i) => i.kind === "ask" && !i.ticked).length;
     const slSync = sl.running ? "Slack: sweeping…" : sl.notConnected ? "Slack: not connected" : sl.error ? "Slack: failed" : sl.lastAt ? `Slack ${ago(sl.lastAt)}` : "Slack";

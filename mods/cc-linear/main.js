@@ -1,11 +1,11 @@
-// Your open Linear issues, grouped by state, each linked to the space and tab working on it (by branch name).
+// Your open ClickUp tasks, grouped by state, each linked to the space and tab working on it (by branch name).
 // Issues come from cc-status (shared "cc.linear"); this panel only asks for a refresh.
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, panes, shared, setShared, theme, run, exec, openOverlay } from "herdr";
 
-const TYPE_RANK = { started: 0, unstarted: 1, triage: 2, backlog: 3 };
+const TYPE_RANK = { started: 0, review: 1, unstarted: 2, triage: 3, backlog: 4 };
 const PRIORITY = { 1: ["Urgent", "blocked"], 2: ["High", "working"] };
 
 function ago(ms) {
@@ -13,7 +13,7 @@ function ago(ms) {
   return m < 1 ? "just now" : m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
 }
 
-// Linear's own branch name, or any branch that carries the identifier (eng-412-…).
+// Any branch that carries the task ID (selp-12914-…).
 export function linkOf(issue, allPanes, allSpaces) {
   const id = issue.identifier.toLowerCase();
   const pane = allPanes.find((p) => p.branch && (p.branch === issue.branchName || p.branch.toLowerCase().includes(id)));
@@ -41,16 +41,16 @@ export default class Linear extends View {
       .border_color(primary ? t.solid : t.border).bg(primary ? t.solid : t.raised).text_color(primary ? t.solid_foreground : t.foreground)
       .hover((s) => s.opacity(0.85)).on_click(() => action()).child(label);
     if (!enabled) return v_flex().p(24).gap(10).items_center()
-      .child(div().text_color(t.muted).child("Linear is off"))
+      .child(div().text_color(t.muted).child("ClickUp is off"))
       .child(button("lin-on", "Turn it on", true, () => settings({ linear: { enabled: true } })));
     if (!data.notConnected) return null;
     return v_flex().p(20).gap(10)
-      .child(div().font_semibold().child("Connect Linear to see your tickets"))
+      .child(div().font_semibold().child("Connect ClickUp to see your tasks"))
       .child(div().text_size(12.5).text_color(t.muted).line_height(1.5).child(
-        "Your issues are read through Claude's Linear connector. In claude.ai, open Settings → Connectors → Linear and connect it, then check again."))
+        "Your tasks are read through clickup-cli. Run `clickup-cli auth` in a terminal, then check again."))
       .child(h_flex().gap(8).pt(4)
         .child(button("lin-check", data.running ? "Checking…" : "Check again", true, () => !data.running && setShared("cc.linear.request", Date.now())))
-        .child(button("lin-off", "I don't use Linear", false, () => settings({ linear: { enabled: false } }))));
+        .child(button("lin-off", "I don't use ClickUp", false, () => settings({ linear: { enabled: false } }))));
   }
 
   render() {
@@ -88,7 +88,7 @@ export default class Linear extends View {
           .when(Boolean(pri), (el) => el.child(div().flex_none().text_size(11).text_color(t[pri[1]]).child(pri[0])))
           .when(!link, (el) => el.child(button(`start-${i.identifier}`, "Start", true,
             () => openOverlay({ mod: "cc-start", kind: "dialog", width: 640, props: { issue: i } }))))
-          .when(Boolean(link), (el) => el.child(button(`open-${i.identifier}`, "Linear", false, () => exec("open", [i.url])))))
+          .when(Boolean(link), (el) => el.child(button(`open-${i.identifier}`, "ClickUp", false, () => exec("open", [i.url])))))
         .when(Boolean(link), (el) => el.child(h_flex().gap(8).items_center().text_size(11.5).text_color(t.muted)
           .child(dot(link.tab.status))
           .child(div().flex_1().min_w(0).truncate().child(`${link.space.name} › ${link.tab.name}${link.tab.status ? ` · ${link.tab.status === "blocked" ? "needs you" : link.tab.status}` : ""}`))
@@ -114,18 +114,18 @@ export default class Linear extends View {
 
     return v_flex().id("cc-linear").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(div().font_semibold().child("My issues"))
+        .child(div().font_semibold().child("My tasks"))
         .child(div().text_size(11).text_color(t.dim).child(issues.length ? String(issues.length) : ""))
         .child(div().flex_1())
         .child(div().id("cc-linear-refresh").text_size(11).text_color(t.dim).hover((s) => s.text_color(t.foreground))
           .on_click(() => refresh()).child(sync ? `${sync} · refresh` : "refresh")))
       .when(Boolean(notice), (el) => el.child(notice))
       .when(!notice && Boolean(data.error), (el) => el.child(v_flex().flex_none().px(14).py(8).gap(2).bg(t.raised).border_b(1).border_color(t.border)
-        .child(div().text_size(12).text_color(t.blocked).child(`Couldn't read Linear: ${data.error}`))
+        .child(div().text_size(12).text_color(t.blocked).child(`Couldn't read ClickUp: ${data.error}`))
         .child(div().text_size(11.5).text_color(t.dim).child("Click refresh to try again."))))
       .when(!notice, (el) => el.child(v_flex().id("cc-linear-list").flex_1().min_h(0).overflow_y_scrollbar()
         .children(groups.flatMap(section))
         .when(groups.length === 0, (el) => el.child(div().p(24).text_center().text_color(t.dim)
-          .child(data.running ? "Loading your issues…" : data.at ? "No open issues assigned to you" : "Not loaded yet")))));
+          .child(data.running ? "Loading your tasks…" : data.at ? "No open tasks assigned to you" : "Not loaded yet")))));
   }
 }

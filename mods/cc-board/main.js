@@ -1,4 +1,4 @@
-// The Board: every piece of work as one card (agent + Linear issue + PR, joined by branch), in four columns.
+// The Board: every piece of work as one card (agent + ClickUp task + PR, joined by branch), in four columns.
 // Click a card to select its tab (the Tasks panel shows its summary); Open goes to its terminal.
 
 import { View, div } from "gpui-kit";
@@ -34,7 +34,7 @@ export default class Board extends View {
     });
   }
 
-  // One card per tab that has an agent, a Linear issue or a PR; then the issues no tab works on.
+  // One card per tab that has an agent, a ClickUp task or a PR; then the issues no tab works on.
   cards() {
     const issues = shared("cc.linear")?.issues ?? [];
     const prs = shared("cc.github")?.prs ?? [];
@@ -66,7 +66,7 @@ export default class Board extends View {
     }
     for (const i of issues) {
       if (used.has(i.identifier) || i.stateType === "backlog") continue;
-      out.push({ key: `i-${i.identifier}`, column: i.stateType === "started" ? "progress" : "todo", issue: i, title: i.title,
+      out.push({ key: `i-${i.identifier}`, column: i.stateType === "started" ? "progress" : i.stateType === "review" ? "review" : "todo", issue: i, title: i.title,
         status: `${i.state}${PRIORITY[i.priority] ? ` · ${PRIORITY[i.priority]}` : ""} · not started here` });
     }
     return out;
@@ -123,7 +123,7 @@ export default class Board extends View {
       if (c.pr?.ci === "fail") actions.push(button(`fix-${c.key}`, "Fix CI", true, () => this.fixCi(c)));
       if (c.pr) actions.push(button(`pr-${c.key}`, `PR #${c.pr.number}`, false, () => exec("open", [c.pr.url])));
       if (!c.tab && c.issue) actions.push(button(`start-${c.key}`, "Start", true, () => openOverlay({ mod: "cc-start", kind: "dialog", width: 640, props: { issue: c.issue } })));
-      if (c.issue) actions.push(button(`lin-${c.key}`, "Linear", false, () => exec("open", [c.issue.url])));
+      if (c.issue) actions.push(button(`lin-${c.key}`, "ClickUp", false, () => exec("open", [c.issue.url])));
       return v_flex().id(c.key).w_full().p(10).gap(6).rounded(8).bg(t.background).border_1()
         .border_color(selected ? t.accent : c.column === "needs" ? t.blocked : t.border)
         .hover((s) => s.bg(t.hover)).on_click(() => (c.tab ? this.select(c) : c.issue && exec("open", [c.issue.url])))

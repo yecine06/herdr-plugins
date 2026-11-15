@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Task notes for agents in Herdr terminals. Files live in <repo>/.agents/tasks/ (kept out of git via info/exclude):
-//   <ISSUE>.md               notes the agent writes, for work on a Linear issue's branch
+//   <ISSUE>.md               notes the agent writes, for work on a ClickUp task's branch
 //   <space>.md, "## <tab>"   the same without an issue: one file per space, a section per tab
 //   .summary/<key>.json      what the Tasks panel shows, rewritten after each turn that changed code
 //
@@ -37,7 +37,7 @@ function where(terminal) {
   return parts.length >= 2 ? { space: parts.slice(0, -1).join(" / "), tab: parts.at(-1) } : null;
 }
 
-// The Linear issue a branch belongs to: Linear's branch name, or an identifier of a team you have issues in.
+// The ClickUp task a branch belongs to: its ID in the branch, or an ID with a prefix you have tasks under.
 function issueOf(branch) {
   if (!branch) return null;
   const issues = readJson(join(APP, "shared.json"))?.["cc.linear"]?.issues ?? [];

@@ -15,6 +15,11 @@ read through the claude.ai connectors, so connect those in claude.ai if you want
 Both screenshots are made by `node scripts/preview.mjs` from made-up data (`scripts/preview/demo.json`) in a
 separate Herdr window with its own home folder and herdr-core, so it never touches your spaces or logins.
 
+> **Fork (branch `clickup`)**: the Linear source is replaced by ClickUp, read through `clickup-cli`
+> (`mods/cc-status/clickup.mjs`) instead of a headless Claude run, so it is free. Tasks assigned to you are mapped onto
+> the panel stages by status name (`STAGES` in that file). Internal names (`cc.linear`, `cc-linear`, `settings.linear`)
+> are kept to stay close to upstream. The standup draft still asks Linear.
+
 ## Install
 
 ```sh

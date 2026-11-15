@@ -19,7 +19,7 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
 
 export function dailyCost(s) {
   const runs = (x) => (x.enabled ? (span(x.hours) * 60) / x.everyMin : 0);
-  const linear = runs(s.linear) * RUN.linear[s.linear.model];
+  const linear = 0;
   const slack = runs(s.slack) * RUN.slack[s.slack.model];
   const standup = s.standup.enabled ? s.standup.times.length * RUN.standup[s.standup.model] : 0;
   return { linear, slack, standup, total: linear + slack + standup };
@@ -74,16 +74,15 @@ export default class Settings extends View {
         .child(h_flex().items_center().child(div().flex_1().text_size(16).font_semibold().child("Command Center settings")).child(div().text_size(11).text_color(t.dim).child("Esc")))
         .child(div().text_size(12).text_color(cost.total > 5 ? t.working : t.muted).child(
           `About ${money(cost.total)} a day in Claude runs at these settings` +
-          ` (Slack ${money(cost.slack)}, Linear ${money(cost.linear)}, standup ${money(cost.standup)}). Task summaries add 1–2¢ per agent turn that changes code.`)))
+          ` (Slack ${money(cost.slack)}, standup ${money(cost.standup)}; ClickUp is free). Task summaries add 1–2¢ per agent turn that changes code.`)))
       .child(v_flex().id("cc-settings-body").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(14).gap(12)
         .child(card("gh", "GitHub", "PR checks for your spaces' branches and review requests, through gh. Free.", d.github.enabled, () => { d.github.enabled = !d.github.enabled; }, [
           row("Check every", seg("gh-every", [3, 5, 10].map((m) => ({ id: m, label: `${m} min` })), d.github.everyMin, (v) => { d.github.everyMin = v; })),
           row("Review requests", seg("gh-rev", [{ id: "direct", label: "Asked of me" }, { id: "all", label: "Including my teams" }], d.github.reviews, (v) => { d.github.reviews = v; })),
         ]))
-        .child(card("lin", "Linear", "Your open issues, through Claude's Linear connector.", d.linear.enabled, () => { d.linear.enabled = !d.linear.enabled; }, [
+        .child(card("lin", "ClickUp", "Your open tasks, through clickup-cli. Free.", d.linear.enabled, () => { d.linear.enabled = !d.linear.enabled; }, [
           row("Check every", every("linear", [15, 30, 60])),
           row("Between", hours("linear")),
-          row("Model", seg("lin-model", MODELS, d.linear.model, (v) => { d.linear.model = v; })),
         ]))
         .child(card("sl", "Slack sweep", "Asks in your DMs and @-mentions, through Claude's Slack connector. Read only.", d.slack.enabled, () => { d.slack.enabled = !d.slack.enabled; }, [
           row("Sweep every", every("slack", [30, 60, 120])),

@@ -1,4 +1,4 @@
-// Start from a Linear issue: a worktree (or a tab) with an agent whose first message is the issue.
+// Start from a ClickUp task: a worktree (or a tab) with an agent whose first message is the issue.
 // props: { issue, overlay }
 
 import { View, div } from "gpui-kit";
@@ -130,7 +130,7 @@ export default class Start extends View {
     } else {
       run("space.new", { folder: this.repo.root, tab: name, argv: argv ?? undefined, task: argv && msg ? msg : undefined });
     }
-    if (this.move) setShared("cc.linear.move", { identifier: i.identifier, at: Date.now() });
+    if (this.move) setShared("cc.linear.move", { identifier: i.identifier, taskId: i.taskId, at: Date.now() });
   }
 
   render() {
@@ -192,7 +192,7 @@ export default class Start extends View {
       .when(this.agent === "claude", (el) => el.child(label("START IN")).child(seg("mode", MODES, this.mode, (v) => { this.mode = v; })))
       .when(this.agent !== "shell", (el) => el.child(label("FIRST MESSAGE"))
         .child(Textarea.new(this.message).h(150).px(10).py(8).rounded(8).border_1().border_color(t.input).bg(t.background).text_size(12.5)))
-      .when(i.stateType !== "started", (el) => el.child(div().pt(14).child(check("move", this.move, `Move ${i.identifier} to In Progress`, () => { this.move = !this.move; }))))
+      .when(i.stateType !== "started", (el) => el.child(div().pt(14).child(check("move", this.move, `Move ${i.identifier} to “en cours”`, () => { this.move = !this.move; }))))
       .child(h_flex().pt(18).gap(8).items_center()
         .child(div().flex_1().text_size(11.5).text_color(t.dim).child(`Opens a tab named “${i.identifier} ${shortTitle(i.title)}”`))
         .child(button("cs-cancel", "Cancel", false, () => closeOverlay(props().overlay)))
