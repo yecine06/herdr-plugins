@@ -1,9 +1,14 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, agents, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
+import { spaces, panes, agents, run, openOverlay, theme, window, shared, layout, settings, nextCommand, focused } from "herdr";
+// The Asks engine (github.com/sachin-philip/herdr-agent-ask) runs here because the tab bar is
+// always shown: asks are detected before the Asks panel (cc-asks) is ever opened.
+import { Engine } from "./engine.js";
+import { readState, loadConfig } from "./state.js";
 
 // Cloned from Herdr's `tabs` (0.1.15): the side-panel buttons are ours.
 const PANELS = [
+  { id: "asks", label: "Asks", icon: "mods/cc-tabs/asks.svg" },
   { id: "inbox", label: "Inbox", icon: "mods/cc-tabs/inbox.svg" },
   { id: "linear", label: "ClickUp", icon: "mods/cc-tabs/linear.svg" },
   { id: "tasks", label: "Tasks", icon: "mods/cc-tabs/tasks.svg" },
@@ -33,9 +38,9 @@ const inboxCount = () =>
   (shared("cc.github")?.reviews ?? []).length +
   (shared("cc.settings")?.slack?.enabled === false ? 0 : (shared("cc.slack")?.items ?? []).filter((s) => s.kind === "ask" && !s.ticked).length);
 
-function togglePanel(id) {
+function togglePanel(id, forceOpen = false) {
   const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body");
-  if (panel && !panel.hidden && body?.active === id) run("layout.hide", { id: "panel" });
+  if (!forceOpen && panel && !panel.hidden && body?.active === id) run("layout.hide", { id: "panel" });
   else { run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" }); }
 }
 
@@ -44,10 +49,17 @@ export default class Tabs extends View {
     this.pressed = null;
     this.scroll = ScrollHandle.new();
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
+    this.engine = new Engine();
+    const config = (cx) => cx.spawn(async (cx) => { this.engine.config = await loadConfig(); this.engine._backend = undefined; this.engine._codex = undefined; cx.notify(); });
+    config(cx);
+    cx.timer.every(30000, config);
+    cx.timer.every(1000, (cx) => this.engine.tick(cx));
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
         if (PANELS.some((p) => p.id === c)) togglePanel(c);
+        if (c === "asks-open") togglePanel("asks", true);
+        if (c === "asks-recheck") this.engine.recheck();
         if (c === "terminals") run("layout.select", { stack: "center", child: "main" });
         if (c === "board") run("layout.select", { stack: "center", child: "board" });
         cx.notify();
@@ -83,7 +95,8 @@ export default class Tabs extends View {
     localStorage.setItem("panels", JSON.stringify(this.panels));
   }
 
-  render() {
+  render(cx) {
+    this.engine.tick(cx);
     const t = theme();
     const space = spaces().find(p => p.active);
     const shown = space?.tabs ?? [];
@@ -130,13 +143,20 @@ export default class Tabs extends View {
     const enabled = PANELS.map((p) => p.id);
     this.syncPanel(space, panel, body, enabled);
     const count = inboxCount();
+    // Pending asks: a count for the shown space, and a dim one when other spaces have some too.
+    const pending = readState().asks.filter(a => a.state === "pending" && !a.notice);
+    const here = pending.filter(a => a.space === (space?.id ?? focused()?.space)).length, elsewhere = pending.length - here;
+    const asksBadge = pending.length ? h_flex().gap(3).items_center()
+      .when(here > 0, el => el.child(div().h(16).min_w(16).px(5).rounded(8).flex().items_center().justify_center().text_size(10.5).font_semibold().bg(t.blocked).text_color(t.background).child(String(here))))
+      .when(elsewhere > 0, el => el.child(div().text_size(10.5).text_color(t.dim).child(here ? `+${elsewhere}` : `${elsewhere} elsewhere`))) : null;
     const panelButton = ({ id, label, icon }) => {
       const on = panel && !panel.hidden && body?.active === id;
       return h_flex().id(`panel-${id}`).h(26).px(8).gap(5).flex_none().items_center().rounded(6)
         .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
         .hover(s => s.bg(t.hover)).on_mouse_down("left", stop)
         .on_click(() => togglePanel(id))
-        .child(svg(icon).size(14)).child(label)
+        .child(svg(icon).size(14)).child(id === "asks" ? this.engine.config?.label ?? label : label)
+        .when(id === "asks" && Boolean(asksBadge), el => el.child(asksBadge))
         .when(id === "inbox" && count > 0, el => el.child(div().text_size(11).font_semibold().text_color(t.blocked).child(String(count))));
     };
     const center = find(root, "center")?.active ?? "main";
