@@ -1,12 +1,15 @@
-// Your open ClickUp tasks, grouped by state, each linked to the space and tab working on it (by branch name).
+// Your open ClickUp tasks as ClickUp shows them (space › folder › list), then by status, each linked to the space and tab working on it (by branch name).
 // Issues come from cc-status (shared "cc.linear"); this panel only asks for a refresh.
 
-import { View, div } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { View, div, svg } from "gpui-kit";
+import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { spaces, panes, shared, setShared, theme, run, exec, openOverlay } from "herdr";
 
 const TYPE_RANK = { started: 0, review: 1, unstarted: 2, triage: 3, backlog: 4 };
 const PRIORITY = { 1: ["Urgent", "blocked"], 2: ["High", "working"] };
+
+// Case and accent blind, so "verifier" finds "vérifier".
+const fold = (s) => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
 function ago(ms) {
   const m = Math.floor((Date.now() - ms) / 60_000);
@@ -26,6 +29,11 @@ export function linkOf(issue, allPanes, allSpaces) {
 export default class Linear extends View {
   init(_props, cx) {
     this.showBacklog = localStorage.getItem("backlog") === "1";
+    // Tree nodes you opened or closed; spaces start open, folders and lists closed.
+    try { this.expanded = JSON.parse(localStorage.getItem("expanded") || "{}"); } catch { this.expanded = {}; }
+    this.query = "";
+    this.search = InputState.new({ placeholder: "Search ID, title, list…" });
+    this.search.on("change", (_e, cx) => { this.query = this.search.value(); cx.notify(); });
     cx.timer.every(60_000, (cx) => cx.notify());
     // First look, or a connector that wasn't connected last time: check once (scheduled checks wait meanwhile).
     const l = shared("cc.linear") ?? {};
@@ -58,13 +66,34 @@ export default class Linear extends View {
     const data = shared("cc.linear") ?? {};
     const prs = shared("cc.github")?.prs ?? [];
     const allPanes = panes(), allSpaces = spaces();
-    const issues = [...(data.issues ?? [])].sort((a, b) =>
-      (TYPE_RANK[a.stateType] ?? 9) - (TYPE_RANK[b.stateType] ?? 9) || (a.priority || 9) - (b.priority || 9));
-    const groups = [];
+    const all = data.issues ?? [];
+    const words = fold(this.query).split(/\s+/).filter(Boolean);
+    const searching = words.length > 0;
+    const issues = all.filter((i) => {
+      if (!searching) return true;
+      const hay = fold([i.identifier, i.title, i.state, i.list, i.folder, i.space].join(" "));
+      return words.every((w) => hay.includes(w));
+    }).sort((a, b) => (TYPE_RANK[a.stateType] ?? 9) - (TYPE_RANK[b.stateType] ?? 9) || (a.priority || 9) - (b.priority || 9));
+
+    // space › folder (none for a folderless list) › list › status, in first-seen order of the sorted tasks.
+    const child = (arr, key, make) => { let n = arr.find((x) => x.key === key); if (!n) { n = make(); arr.push(n); } return n; };
+    const tree = [];
     for (const i of issues) {
-      const g = groups.find((x) => x.name === i.state);
-      if (g) g.items.push(i); else groups.push({ name: i.state, type: i.stateType, items: [i] });
+      const sp = child(tree, `s:${i.spaceId || i.space}`, () => ({ key: `s:${i.spaceId || i.space}`, name: i.space || "No space", folders: [] }));
+      const fo = child(sp.folders, `f:${i.folderId || sp.key}`, () => ({ key: `f:${i.folderId || sp.key}`, name: i.folder, lists: [] }));
+      const li = child(fo.lists, `l:${i.listId || i.list}`, () => ({ key: `l:${i.listId || i.list}`, name: i.list || "No list", groups: [] }));
+      child(li.groups, i.state, () => ({ key: i.state, name: i.state, type: i.stateType, items: [] })).items.push(i);
     }
+    const active = (items) => items.filter((i) => i.stateType !== "backlog").length;
+    const countList = (l) => l.groups.flatMap((g) => g.items);
+    const countFolder = (f) => f.lists.flatMap(countList);
+    const countSpace = (s) => s.folders.flatMap(countFolder);
+    const isOpen = (key, byDefault) => searching || (this.expanded[key] ?? byDefault);
+    const toggle = (key, byDefault) => (_e, cx) => {
+      this.expanded[key] = !(this.expanded[key] ?? byDefault);
+      localStorage.setItem("expanded", JSON.stringify(this.expanded));
+      cx.notify();
+    };
     const stop = (_e, cx) => cx.stop_propagation();
 
     const dot = (status) => status === "working"
@@ -76,12 +105,12 @@ export default class Linear extends View {
       .hover((s) => s.opacity(0.85)).on_mouse_down("left", stop)
       .on_click((_e, cx) => { cx.stop_propagation(); action(); }).child(label);
 
-    const row = (i) => {
+    const row = (i, indent = 14) => {
       const link = linkOf(i, allPanes, allSpaces);
       const pr = link && prs.find((p) => p.branch === link.branch);
       const pri = PRIORITY[i.priority];
       const open = () => link ? (run("space.select", { id: link.space.id }), run("tab.select", { id: link.tab.id })) : exec("open", [i.url]);
-      return v_flex().id(`li-${i.identifier}`).w_full().px(14).py(8).gap(5).hover((s) => s.bg(t.hover)).on_click(() => open())
+      return v_flex().id(`li-${i.identifier}`).w_full().pl(indent).pr(14).py(8).gap(5).hover((s) => s.bg(t.hover)).on_click(() => open())
         .child(h_flex().gap(8).items_center()
           .child(div().flex_none().text_size(11).text_color(t.dim).child(i.identifier))
           .child(div().flex_1().min_w(0).truncate().font_medium().child(i.title))
@@ -96,17 +125,39 @@ export default class Linear extends View {
             .child(`#${pr.number} ${pr.ci === "fail" ? "✗" : pr.ci === "pass" ? "✓" : "⋯"}`)))));
     };
 
-    const section = (g) => {
-      const folded = g.type === "backlog" && !this.showBacklog;
+    // A tree level: chevron, name, open tasks (backlog apart). Clicking opens or closes it.
+    const node = (key, byDefault, name, items, indent, strong) => {
+      const open = isOpen(key, byDefault), n = active(items), backlog = items.length - n;
+      return h_flex().id(`n-${key}`).w_full().pl(indent).pr(14).py(5).gap(6).items_center().text_size(strong ? 12.5 : 12)
+        .hover((s) => s.bg(t.hover)).on_click(toggle(key, byDefault))
+        .child(div().flex_none().w(10).text_color(t.dim).child(open ? "▾" : "▸"))
+        .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(strong ? t.foreground : t.muted).child(name))
+        .child(div().flex_none().text_size(11).text_color(t.dim).child(`${n}${backlog ? ` · ${backlog} backlog` : ""}`));
+    };
+
+    const status = (g, indent) => {
+      const folded = g.type === "backlog" && !this.showBacklog && !searching;
       return [
-        h_flex().id(`lg-${g.name}`).px(14).pt(10).pb(4).gap(8).items_center().text_size(11.5)
+        h_flex().id(`lg-${g.key}-${indent}-${g.items[0].identifier}`).pl(indent).pr(14).pt(6).pb(2).gap(8).items_center().text_size(11)
           .when(g.type === "backlog", (el) => el.on_click((_e, cx) => { this.showBacklog = !this.showBacklog; localStorage.setItem("backlog", this.showBacklog ? "1" : "0"); cx.notify(); }))
-          .child(div().font_semibold().text_color(t.foreground).child(g.name))
+          .child(div().font_semibold().text_color(t.muted).child(g.name.toUpperCase()))
           .child(div().text_color(t.dim).child(String(g.items.length)))
           .when(g.type === "backlog", (el) => el.child(div().text_color(t.dim).child(folded ? "show" : "hide"))),
-        ...(folded ? [] : g.items.map(row)),
+        ...(folded ? [] : g.items.map((i) => row(i, indent))),
       ];
     };
+
+    const list = (l, indent) => [
+      node(l.key, false, l.name, countList(l), indent, false),
+      ...(isOpen(l.key, false) ? l.groups.flatMap((g) => status(g, indent + 16)) : []),
+    ];
+    const folder = (f, indent) => f.name
+      ? [node(f.key, false, f.name, countFolder(f), indent, false), ...(isOpen(f.key, false) ? f.lists.flatMap((l) => list(l, indent + 12)) : [])]
+      : f.lists.flatMap((l) => list(l, indent));
+    const space = (sp) => [
+      node(sp.key, true, sp.name, countSpace(sp), 10, true),
+      ...(isOpen(sp.key, true) ? sp.folders.flatMap((f) => folder(f, 22)) : []),
+    ];
 
     const sync = data.running ? "checking…" : data.at ? ago(data.at) : "";
     const notice = this.notice(t, data);
@@ -115,17 +166,23 @@ export default class Linear extends View {
     return v_flex().id("cc-linear").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child("My tasks"))
-        .child(div().text_size(11).text_color(t.dim).child(issues.length ? String(issues.length) : ""))
+        .child(div().text_size(11).text_color(t.dim).child(issues.length ? (searching ? `${issues.length} / ${all.length}` : String(issues.length)) : ""))
         .child(div().flex_1())
         .child(div().id("cc-linear-refresh").text_size(11).text_color(t.dim).hover((s) => s.text_color(t.foreground))
           .on_click(() => refresh()).child(sync ? `${sync} · refresh` : "refresh")))
+      .when(!notice, (el) => el.child(h_flex().h(36).flex_none().mx(10).my(8).px(10).gap(8).items_center().rounded(8).border_1()
+        .border_color(searching ? t.accent : t.border).bg(t.raised)
+        .child(svg("mods/workspace-chrome/search.svg").size(14).text_color(t.dim))
+        .child(Input.new(this.search).flex_1().h_full().text_size(12.5).text_color(t.foreground))
+        .when(searching, (el) => el.child(div().id("cc-linear-clear").px(4).text_color(t.dim).hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => { this.search.set_value(""); this.query = ""; cx.notify(); }).child("×")))))
       .when(Boolean(notice), (el) => el.child(notice))
       .when(!notice && Boolean(data.error), (el) => el.child(v_flex().flex_none().px(14).py(8).gap(2).bg(t.raised).border_b(1).border_color(t.border)
         .child(div().text_size(12).text_color(t.blocked).child(`Couldn't read ClickUp: ${data.error}`))
         .child(div().text_size(11.5).text_color(t.dim).child("Click refresh to try again."))))
       .when(!notice, (el) => el.child(v_flex().id("cc-linear-list").flex_1().min_h(0).overflow_y_scrollbar()
-        .children(groups.flatMap(section))
-        .when(groups.length === 0, (el) => el.child(div().p(24).text_center().text_color(t.dim)
-          .child(data.running ? "Loading your tasks…" : data.at ? "No open tasks assigned to you" : "Not loaded yet")))));
+        .children(tree.flatMap(space))
+        .when(tree.length === 0, (el) => el.child(div().p(24).text_center().text_color(t.dim)
+          .child(data.running ? "Loading your tasks…" : searching ? "No task matches" : data.at ? "No open tasks assigned to you" : "Not loaded yet")))));
   }
 }

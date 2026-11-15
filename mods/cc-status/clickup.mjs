@@ -30,8 +30,13 @@ function stage(status, type) {
 function list() {
   const me = cli(["user", "me"]).data;
   const id = (me.user ?? me).id;
-  const fields = "id,custom_id,name,status.status,status.type,priority.priority,url,list.name,folder.name,text_content";
+  const fields = "id,custom_id,name,status.status,status.type,priority.priority,url,list.id,list.name,folder.id,folder.name,folder.hidden,space.id,team_id,text_content";
   const tasks = cli(["tasks", "search", "--assignees", String(id), "--subtasks", "--all-pages", "--fields", fields]).data ?? [];
+  const spaces = new Map();
+  for (const team of new Set(tasks.map((t) => t.team_id).filter(Boolean))) {
+    const out = cli(["spaces", "list", "--team-id", String(team)]).data;
+    for (const sp of (Array.isArray(out) ? out : out?.spaces ?? [])) spaces.set(String(sp.id), sp.name);
+  }
   const issues = tasks.map((t) => ({
     identifier: t.custom_id || t.id,
     taskId: t.id,
@@ -41,8 +46,15 @@ function list() {
     priority: PRIORITY[t["priority.priority"]] ?? 0,
     url: t.url,
     description: (t.text_content ?? "").slice(0, 600),
+    // Where it lives in ClickUp: space › folder › list. A folderless list has a hidden folder: no folder level.
+    space: spaces.get(String(t["space.id"])) ?? "",
+    spaceId: String(t["space.id"] ?? ""),
+    folder: t["folder.hidden"] ? "" : t["folder.name"] ?? "",
+    folderId: t["folder.hidden"] ? "" : String(t["folder.id"] ?? ""),
+    list: t["list.name"] ?? "",
+    listId: String(t["list.id"] ?? ""),
     project: t["list.name"] ?? "",
-    cycle: t["folder.name"] ?? "",
+    cycle: t["folder.hidden"] ? "" : t["folder.name"] ?? "",
   })).filter((i) => i.stateType !== "closed");
   return { connected: true, error: "", issues };
 }
