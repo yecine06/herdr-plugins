@@ -20,7 +20,8 @@ const LAYOUT = "command-center";
 const MARKER = ".cc-managed";
 const SETTINGS = join(app, "command-center.json");
 const KEYS = { "cmd-alt-i": "cc-tabs.inbox", "cmd-alt-l": "cc-tabs.linear", "cmd-alt-t": "cc-tabs.tasks", "cmd-alt-1": "cc-tabs.terminals", "cmd-alt-2": "cc-tabs.board",
-  "cmd-shift-a": "cc-tabs.asks", "alt-0": "cc-agents.show", "alt-1": "cc-agents.n1", "alt-2": "cc-agents.n2", "alt-3": "cc-agents.n3", "alt-4": "cc-agents.n4", "alt-5": "cc-agents.n5", "alt-6": "cc-agents.n6", "alt-7": "cc-agents.n7", "alt-8": "cc-agents.n8", "alt-9": "cc-agents.n9" };
+  "cmd-shift-a": "cc-tabs.asks", "alt-0": "cc-agents.show", "alt-1": "cc-agents.n1", "alt-2": "cc-agents.n2", "alt-3": "cc-agents.n3", "alt-4": "cc-agents.n4", "alt-5": "cc-agents.n5", "alt-6": "cc-agents.n6", "alt-7": "cc-agents.n7", "alt-8": "cc-agents.n8", "alt-9": "cc-agents.n9",
+  "ctrl-shift-o": "mod.open:cc-hints" };
 const HOOK = "node ~/.config/herdr-app/mods/cc-tasks/cc-task.mjs hook";
 const RULE_HEADING = "## Task notes (Herdr)";
 const RULE = `${RULE_HEADING}
