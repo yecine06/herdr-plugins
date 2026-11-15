@@ -79,15 +79,16 @@ export default class Hints extends View {
     this.busy = true;
     cx.spawn(async (cx) => {
       try {
-        let target = item.url ?? item.value;
+        // Screen text decides what opens, so never hand a path to the default handler: a folder named
+        // "X.app" would launch. Folders are revealed in Finder, images forced into Preview.
+        let args = [item.url ?? item.value];
         if (item.file) {
           const abs = this.resolve(item.file);
           if (!abs || (await exec("test", ["-e", abs])).code !== 0) throw new Error(`Not found from ${this.cwd ?? "this terminal"}: ${item.file}`);
-          // Folders and images go to Finder / Preview, other files to VS Code at the line.
           const folder = (await exec("test", ["-d", abs])).code === 0;
-          target = folder || item.type === "image" ? abs : `vscode://file${encodeURI(abs)}${item.line ? `:${item.line}` : ""}`;
+          args = folder ? ["-R", abs] : item.type === "image" ? ["-a", "Preview", abs] : [`vscode://file${encodeURI(abs)}${item.line ? `:${item.line}` : ""}`];
         }
-        const r = await exec("open", [target]);
+        const r = await exec("open", args);
         if (r.code !== 0) throw new Error((r.stderr || "Couldn't open it").trim().split("\n")[0]);
         this.close();
       } catch (e) {
