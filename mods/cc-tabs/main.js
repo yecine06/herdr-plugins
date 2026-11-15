@@ -12,6 +12,7 @@ const PANELS = [
   { id: "inbox", label: "Inbox", icon: "mods/cc-tabs/inbox.svg" },
   { id: "linear", label: "ClickUp", icon: "mods/cc-tabs/linear.svg" },
   { id: "tasks", label: "Tasks", icon: "mods/cc-tabs/tasks.svg" },
+  { id: "plans", label: "Plan", icon: "mods/cc-plans/plan.svg" },
   { id: "files", label: "Files", icon: "mods/files/file.svg" },
   { id: "changes", label: "Changes", icon: "mods/changes/changes.svg" },
 ];

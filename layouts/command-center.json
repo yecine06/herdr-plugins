@@ -138,7 +138,10 @@
                       },
                       "header": {
                         "content": {
-                          "mod": "pane"
+                          "mod": "cc-terminal-ids",
+                          "props": {
+                            "role": "pane"
+                          }
                         },
                         "height": 30,
                         "position": "top",
@@ -197,6 +200,13 @@
                       "type": "block",
                       "content": {
                         "mod": "cc-tasks"
+                      }
+                    },
+                    {
+                      "id": "plans",
+                      "type": "block",
+                      "content": {
+                        "mod": "cc-plans"
                       }
                     },
                     {
