@@ -1,11 +1,12 @@
 // Start from a ClickUp task: a worktree (or a tab) with an agent whose first message is the issue.
+// A task in review opens a review instead: a tab where the code already is, its status left alone.
 // props: { issue, overlay }
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea, InputState, Input } from "gpui-base";
 import { spaces, panes, props, theme, run, exec, knownAgents, openOverlay, closeOverlay, shared, setShared, pickFolder, home } from "herdr";
 
-// Folders scanned for git repos, three levels deep: settings' repoRoots, or when unset the parent folders of
+// Folders scanned for git repos, four levels deep: settings' repoRoots, or when unset the parent folders of
 // the repos open in Herdr (cc-status works them out). "Change folders" saves them to settings.
 const repoRoots = () => shared("cc.settings")?.roots ?? [];
 const tilde = (p) => p.replace(home(), "~");
@@ -32,18 +33,34 @@ function firstMessage(i) {
   return `Work on ${i.identifier}: ${i.title}\n${i.url}\n${about ? `\n${about}\n` : ""}\nKeep notes on your plan, decisions and assumptions as you go. When done, open a PR titled "${i.identifier}: …" and stop.`;
 }
 
+function reviewMessage(i) {
+  const about = (i.description ?? "").trim();
+  return `Review ${i.identifier}: ${i.title}\n${i.url}\n${about ? `\n${about}\n` : ""}\nFind the merge requests for this task (branch or title containing ${i.identifier}) in the repos of this folder. Review them against the task: correctness, missing cases, tests. Report your findings, most severe first. Do not push, merge or change the task's status.`;
+}
+
+// A folder that holds several repos side by side (a project split across repos) is offered as one entry.
+function projectFolders(repos) {
+  const count = new Map();
+  for (const r of repos) {
+    const parent = r.root.replace(/\/[^/]+$/, "");
+    count.set(parent, (count.get(parent) ?? 0) + 1);
+  }
+  return [...count].filter(([, n]) => n >= 2).map(([root, n]) => ({ root, name: root.split("/").pop(), space: null, git: false, repos: n }));
+}
+
 export default class Start extends View {
   init(_props, cx) {
     const i = props()?.issue;
     if (!i) return;
-    this.where = "worktree";
+    this.review = i.stateType === "review";
+    this.where = this.review ? "tab" : "devflow";
     this.mode = "plan";
     this.agent = "claude";
-    this.move = i.stateType !== "started";
+    this.move = !this.review && i.stateType !== "started";
     this.repos = [];
     this.repo = null;
     this.agents = [{ key: "claude", name: "Claude Code", run: ["claude"] }, { key: "shell", name: "Shell", run: null }];
-    this.message = TextareaState.new({ value: firstMessage(i), rows: 7 });
+    this.message = TextareaState.new({ value: this.review ? reviewMessage(i) : firstMessage(i), rows: 7 });
     this.query = "";
     this.filter = InputState.new({ placeholder: "Filter repos" });
     this.filter.on("change", (_e, cx) => { this.query = this.filter.value().trim().toLowerCase(); cx.notify(); });
@@ -60,10 +77,12 @@ export default class Start extends View {
     this.scan(cx, true);
   }
 
-  // Repos open as local spaces (the shown one first), then every repo under the folders.
+  // Repos open as local spaces (the shown one first), then every repo under the folders, then the folders
+  // that hold several repos. A space opened on a plain folder (no git) is kept too, so it can be reused.
   scan(cx, pick, roots = repoRoots()) {
     cx.spawn(async (cx) => {
       const byRoot = new Map();
+      const plainSpaces = new Map();
       const ordered = [...spaces()].sort((a, b) => Number(b.active) - Number(a.active));
       for (const s of ordered) {
         if (s.machine) continue;
@@ -72,19 +91,22 @@ export default class Start extends View {
         if (!cwd) continue;
         const r = await exec("git", ["rev-parse", "--show-toplevel"], { cwd }).catch(() => null);
         const root = r?.code === 0 ? r.stdout.trim() : null;
-        if (root && !byRoot.has(root)) byRoot.set(root, { root, name: root.split("/").pop(), space: s.id });
+        if (root && !byRoot.has(root)) byRoot.set(root, { root, name: root.split("/").pop(), space: s.id, git: true });
+        else if (!root && !plainSpaces.has(cwd.replace(/\/+$/, ""))) plainSpaces.set(cwd.replace(/\/+$/, ""), s.id);
       }
       const scanned = [];
       for (const dir of roots) {
-        const r = await exec("find", [dir, "-maxdepth", "3", "-name", ".git", "-not", "-path", "*/node_modules/*"], { timeout: 15_000 }).catch(() => null);
+        const r = await exec("find", [dir, "-maxdepth", "4", "(", "-name", "node_modules", "-o", "-name", "vendor", ")", "-prune", "-o", "-name", ".git", "-print"], { timeout: 15_000 }).catch(() => null);
         for (const line of (r?.stdout ?? "").split("\n").filter(Boolean)) {
           const root = line.replace(/\/\.git$/, "");
-          if (!byRoot.has(root)) scanned.push({ root, name: root.split("/").pop(), space: null });
+          if (!byRoot.has(root) && !scanned.some((x) => x.root === root)) scanned.push({ root, name: root.split("/").pop(), space: null, git: true });
         }
       }
-      scanned.sort((a, b) => a.name.localeCompare(b.name));
+      const folders = projectFolders([...byRoot.values(), ...scanned])
+        .map((f) => ({ ...f, space: plainSpaces.get(f.root) ?? null }));
+      const byName = (a, b) => a.name.localeCompare(b.name);
       const picked = this.repo?.root;
-      this.repos = [...byRoot.values(), ...scanned];
+      this.repos = [...byRoot.values(), ...scanned.sort(byName), ...folders.sort(byName)];
       this.suggested = suggest(props().issue, this.repos);
       this.repo = (picked && this.repos.find((r) => r.root === picked)) || (pick && this.suggested) || this.repos[0] || null;
       cx.notify();
@@ -101,26 +123,45 @@ export default class Start extends View {
 
   pickRepo(cx) {
     cx.spawn(async (cx) => {
-      const folder = await pickFolder({ prompt: "Use this repo" });
-      if (!folder) return;
+      const picked = await pickFolder({ prompt: "Use this folder" });
+      if (!picked) return;
+      const folder = picked.replace(/\/+$/, "");
+      // A folder outside any repo (a project split across repos) is fine: it opens as a tab, without a worktree.
       const r = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: folder }).catch(() => null);
-      if (r?.code !== 0) { this.pickError = "That folder isn't in a git repo."; cx.notify(); return; }
-      const root = r.stdout.trim();
-      this.pickError = null;
-      this.repo = this.repos.find((x) => x.root === root) ?? { root, name: root.split("/").pop(), space: null };
+      const git = r?.code === 0;
+      const root = git ? r.stdout.trim() : folder;
+      this.repo = this.repos.find((x) => x.root === root) ?? { root, name: root.split("/").pop(), space: null, git };
       if (!this.repos.includes(this.repo)) this.repos.push(this.repo);
       cx.notify();
     });
   }
 
+  // "dev-workflow" hands the worktrees to the Claude skill of that name (project sheet, per-repo branch
+  // format, worktrees/<TICKET>/<repo>, post-setup, worktree guard hook): the agent starts in the project
+  // folder and creates them itself. "Herdr worktree" is the built-in one: one repo, ~/.herdr/worktrees.
+  whereOptions() {
+    return [
+      ...(this.agent === "claude" ? [{ id: "devflow", label: "dev-workflow" }] : []),
+      ...(this.repo?.git === false ? [] : [{ id: "worktree", label: "Herdr worktree" }]),
+      { id: "tab", label: "New tab, no worktree" },
+    ];
+  }
+
+  whereNow() {
+    const options = this.whereOptions();
+    return options.some((o) => o.id === this.where) ? this.where : "tab";
+  }
+
   start() {
     const i = props().issue;
-    const msg = this.message.value().trim();
+    const where = this.whereNow();
+    const typed = this.message.value().trim();
+    const msg = where === "devflow" ? `/dev-workflow ${i.identifier}\n\n${typed}` : typed;
     const agent = this.agents.find((a) => a.key === this.agent);
     const name = `${i.identifier} ${shortTitle(i.title)}`;
     const argv = !agent?.run ? null : agent.key === "claude" ? [...agent.run, "--permission-mode", this.mode] : [...agent.run];
     closeOverlay(props().overlay);
-    if (this.where === "worktree") {
+    if (where === "worktree") {
       // The worktree dialog takes no first message, so it goes on the agent's command line.
       openOverlay({ mod: "worktree", kind: "dialog", width: 440, height: 260, props: {
         space: this.repo.space, folder: this.repo.root, branch: i.branchName || `${i.identifier.toLowerCase()}-${slug(i.title)}`,
@@ -152,6 +193,8 @@ export default class Start extends View {
       .child(div().text_size(12.5).child(text));
     const branch = i.branchName || `${i.identifier.toLowerCase()}-${slug(i.title)}`;
     const ready = Boolean(this.repo);
+    const plain = this.repo?.git === false;
+    const where = this.whereNow();
 
     return v_flex().id("cc-start").track_focus(this.handle)
       .on_key_down((e, cx) => { if (e.key === "escape") { closeOverlay(props().overlay); cx.stop_propagation(); } })
@@ -162,11 +205,11 @@ export default class Start extends View {
         .child(div().flex_1()).child(div().text_size(11).text_color(t.dim).child("Esc")))
       .child(div().pt(6).text_size(16).font_semibold().child(i.title))
       .child(label("WHERE"))
-      .child(seg("where", [{ id: "worktree", label: "New worktree" }, { id: "tab", label: "New tab in its space" }], this.where, (v) => { this.where = v; }))
+      .child(seg("where", this.whereOptions(), where, (v) => { this.where = v; }))
       .child(h_flex().pt(8).gap(8).items_center()
         .child(Input.new(this.filter).flex_1().h(30).px(9).rounded(7).border_1().border_color(t.input).bg(t.background).text_size(12.5))
         .child(div().id("repo-other").flex_none().text_size(12).text_color(t.muted).cursor_pointer()
-          .hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => this.pickRepo(cx)).child("Other repo…")))
+          .hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => this.pickRepo(cx)).child("Other folder…")))
       .child(v_flex().id("repo-list").mt(6).h(150).overflow_y_scrollbar().rounded(7).border_1().border_color(t.border)
         .children(this.repos.filter((r) => !this.query || r.name.toLowerCase().includes(this.query) || r.root.toLowerCase().includes(this.query)).map((r, n) =>
           h_flex().id(`repo-${n}`).px(10).py(5).gap(8).items_center().cursor_pointer()
@@ -174,6 +217,7 @@ export default class Start extends View {
             .on_click((_e, cx) => { this.repo = r; cx.notify(); })
             .child(div().flex_none().text_size(12.5).text_color(this.repo === r ? t.foreground : t.muted).child(r.name))
             .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(tilde(r.root)))
+            .when(Boolean(r.repos), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.muted).child(`${r.repos} repos`)))
             .when(Boolean(r.space), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.done).child("open")))
             .when(this.suggested === r, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.accent).child("suggested"))))))
       .child(h_flex().pt(6).gap(6).items_center().text_size(11.5).text_color(t.dim)
@@ -184,18 +228,20 @@ export default class Start extends View {
         .when(this.editingRoots, (el) => el
           .child(Input.new(this.rootsInput).flex_1().h(28).px(8).rounded(6).border_1().border_color(t.accent).bg(t.background).text_size(12))
           .child(div().id("roots-save").flex_none().cursor_pointer().text_color(t.foreground).on_click((_e, cx) => this.saveRoots(cx)).child("Save"))))
-      .when(Boolean(this.pickError), (el) => el.child(div().pt(6).text_size(11.5).text_color(t.blocked).child(this.pickError)))
-      .child(div().pt(6).text_size(11.5).text_color(t.dim).child(!ready ? "Pick a repo"
-        : this.where === "worktree" ? `Branch ${branch}, in a new space` : `In ${this.repo.name}, on the branch it has checked out`))
+      .child(div().pt(6).text_size(11.5).text_color(t.dim).child(!ready ? "Pick a repo or a folder"
+        : where === "devflow" ? `Claude runs /dev-workflow ${i.identifier} from ${this.repo.name}: worktrees and branches follow the project sheet`
+        : where === "worktree" ? `Branch ${branch}, in a new space`
+        : plain ? `In ${this.repo.name}, a folder of several repos: no worktree, each repo stays on its branch`
+        : `In ${this.repo.name}, on the branch it has checked out`))
       .child(label("AGENT"))
       .child(seg("agent", this.agents.map((a) => ({ id: a.key, label: a.name })), this.agent, (v) => { this.agent = v; }))
       .when(this.agent === "claude", (el) => el.child(label("START IN")).child(seg("mode", MODES, this.mode, (v) => { this.mode = v; })))
       .when(this.agent !== "shell", (el) => el.child(label("FIRST MESSAGE"))
         .child(Textarea.new(this.message).h(150).px(10).py(8).rounded(8).border_1().border_color(t.input).bg(t.background).text_size(12.5)))
-      .when(i.stateType !== "started", (el) => el.child(div().pt(14).child(check("move", this.move, `Move ${i.identifier} to “en cours”`, () => { this.move = !this.move; }))))
+      .when(!this.review && i.stateType !== "started", (el) => el.child(div().pt(14).child(check("move", this.move, `Move ${i.identifier} to “en cours”`, () => { this.move = !this.move; }))))
       .child(h_flex().pt(18).gap(8).items_center()
         .child(div().flex_1().text_size(11.5).text_color(t.dim).child(`Opens a tab named “${i.identifier} ${shortTitle(i.title)}”`))
         .child(button("cs-cancel", "Cancel", false, () => closeOverlay(props().overlay)))
-        .child(button("cs-start", "Start", true, () => this.start(), ready)));
+        .child(button("cs-start", this.review ? "Start review" : "Start", true, () => this.start(), ready)));
   }
 }

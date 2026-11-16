@@ -46,7 +46,8 @@ export default class Board extends View {
         const agent = list.find((a) => a.tab === tab.id);
         const branch = tabPanes.find((p) => p.branch)?.branch ?? null;
         const cwd = tabPanes.find((p) => p.cwd)?.cwd ?? space.folder;
-        const issue = issueFor(branch, issues);
+        // A tab started on a project folder (dev-workflow, several repos) has no branch: its name carries the ID.
+        const issue = issueFor(branch, issues) ?? issueFor(tab.name, issues);
         const pr = branch ? prs.find((p) => p.branch === branch) : null;
         if (issue) used.add(issue.identifier);
         let column = null, status = "";
@@ -122,7 +123,7 @@ export default class Board extends View {
       if (c.tab) actions.push(button(`open-${c.key}`, "Open", false, () => this.openTerminal(c)));
       if (c.pr?.ci === "fail") actions.push(button(`fix-${c.key}`, "Fix CI", true, () => this.fixCi(c)));
       if (c.pr) actions.push(button(`pr-${c.key}`, `PR #${c.pr.number}`, false, () => exec("open", [c.pr.url])));
-      if (!c.tab && c.issue) actions.push(button(`start-${c.key}`, "Start", true, () => openOverlay({ mod: "cc-start", kind: "dialog", width: 640, props: { issue: c.issue } })));
+      if (!c.tab && c.issue) actions.push(button(`start-${c.key}`, c.issue.stateType === "review" ? "Review" : "Start", true, () => openOverlay({ mod: "cc-start", kind: "dialog", width: 640, props: { issue: c.issue } })));
       if (c.issue) actions.push(button(`lin-${c.key}`, "ClickUp", false, () => exec("open", [c.issue.url])));
       return v_flex().id(c.key).w_full().p(10).gap(6).rounded(8).bg(t.background).border_1()
         .border_color(selected ? t.accent : c.column === "needs" ? t.blocked : t.border)
