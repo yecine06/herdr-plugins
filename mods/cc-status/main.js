@@ -60,8 +60,11 @@ function snippet(text) {
 }
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-// gardien (~/Code/P01-perso/33.12-outils-perso/gardien) lists the approvals waiting for you here.
-const gardienDir = () => `${home()}/Library/Application Support/gardien/pending`;
+// gardien (~/Code/P01-perso/33.12-outils-perso/gardien) lists the approvals waiting for you here:
+// /var/db/gardien once installed as a root daemon, the owner's data dir before.
+const gardienDirs = () => ["/var/db/gardien/pending", `${home()}/Library/Application Support/gardien/pending`];
+let gardienPending = null;
+const gardienDir = () => gardienPending ?? gardienDirs()[0];
 
 export default class CcStatus extends View {
   init(_props, cx) {
@@ -100,7 +103,10 @@ export default class CcStatus extends View {
     cx.timer.every(60_000, (cx) => this.tick(cx));
     // gardien approvals: the folder holds only requests.json, rewritten on every change.
     cx.spawn(async () => {
-      try { await fs.stat(gardienDir()); } catch { return; } // no gardien: the minute tick still checks
+      for (const d of gardienDirs()) {
+        try { await fs.stat(d); gardienPending = d; break; } catch {}
+      }
+      if (!gardienPending) return; // no gardien: the minute tick still checks
       for (;;) { await this.gardien(); await watchFolder(gardienDir()); }
     });
     // `herdr-app do cc-status.linear` / `cc-status.github`: check now.

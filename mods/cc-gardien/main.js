@@ -116,7 +116,7 @@ export default class Gardien extends View {
         .child(h_flex().gap(8).items_center()
           .child(div().font_semibold().child("Gardien"))
           .child(div().flex_1().text_size(11).text_color(t.dim).child(`${todayN} accès aujourd'hui${deniedN ? ` · ${deniedN} refusés` : ""}${pending.length ? ` · ${pending.length} en attente` : ""}`))
-          .child(button("Vérifier", "g-verify", () => exec("sh", ["-c", `"$HOME/Code/P01-perso/33.12-outils-perso/gardien/bin/gardien" log --verify > "$TMPDIR/gardien-verify.txt" 2>&1; open -e "$TMPDIR/gardien-verify.txt"`]))))
+          .child(button("Vérifier", "g-verify", () => exec("sh", ["-c", `/usr/local/bin/gardien log --verify > "$TMPDIR/gardien-verify.txt" 2>&1; open -e "$TMPDIR/gardien-verify.txt"`]))))
         .child(h_flex().gap(4).flex_wrap().children(FILTERS.map(chip))))
       .child(v_flex().id("cc-gardien-list").flex_1().min_h(0).overflow_y_scrollbar()
         .children(rows)
