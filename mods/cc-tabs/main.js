@@ -34,6 +34,7 @@ function issueOf(tabId, issues, allPanes) {
 
 // Keep in step with cc-inbox's sections.
 const inboxCount = () =>
+  (shared("cc.gardien") ?? []).filter((g) => g.deadline_ms > Date.now()).length +
   agents().filter((a) => a.status === "blocked" || a.status === "done").length +
   (shared("cc.github")?.prs ?? []).filter((p) => p.ci === "fail").length +
   (shared("cc.github")?.reviews ?? []).length +

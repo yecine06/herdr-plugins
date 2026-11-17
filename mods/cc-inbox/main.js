@@ -68,7 +68,21 @@ export default class Inbox extends View {
     const snippets = shared("cc.snippets") ?? {};
     const gh = shared("cc.github") ?? {};
     const out = [];
-    for (const a of agents()) {
+    // gardien: an agent waits for an access (AWS, SSH, secrets) that only you can approve.
+    const live = agents();
+    for (const g of shared("cc.gardien") ?? []) {
+      if (!(g.deadline_ms > Date.now())) continue;
+      const a = live.find((x) => x.address === g.terminal_id);
+      const where = a ? `${a.space_name} · ${a.tab_name}` : g.terminal || "";
+      const focus = g.terminal_id ? () => run("agent.focus", { terminal: g.terminal_id }) : () => {};
+      const left = Math.max(1, Math.ceil((g.deadline_ms - Date.now()) / 60_000));
+      out.push({ key: `g-${g.id}`, group: "agents", section: 0, kind: "ACCÈS", tone: "blocked", time: g.started_ms, open: focus,
+        title: where ? `${g.title} · ${where}` : g.title,
+        body: [g.headline, g.step || g.why, g.command, `À valider dans la fenêtre gardien ou sur le téléphone · expire dans ${left} min`]
+          .filter(Boolean).join(" — "),
+        actions: g.terminal_id ? [{ label: "Aller au terminal", primary: true, run: focus }] : [] });
+    }
+    for (const a of live) {
       const focus = () => run("agent.focus", { terminal: a.address });
       const time = tabs.get(a.tab)?.changed_at;
       if (a.status === "blocked") {

@@ -2,7 +2,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, agents, panes, theme, run, exec, hc, keys, window, shared, setShared, home, appHome, notify, nextCommand, layout, openOverlay } from "herdr";
+import { spaces, agents, panes, theme, run, exec, hc, keys, window, shared, setShared, home, appHome, notify, nextCommand, layout, openOverlay, watchFolder } from "herdr";
 import { SLACK_TIMEOUT, SLACK_TOOLS, SLACK_SCHEMA, slackPrompt, loadState, saveState, merge, apply, publish } from "./slack.js";
 import { STANDUP_TIMEOUT, STANDUP_TOOLS, STANDUP_SCHEMA, ASK_SCHEMA, windowFor, gatherLocal, standupPrompt, standupSlot,
   toBullets, toText, remember, applyEdit, askPrompt, applyAsk } from "./standup.js";
@@ -60,6 +60,8 @@ function snippet(text) {
 }
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// gardien (~/Code/P01-perso/33.12-outils-perso/gardien) lists the approvals waiting for you here.
+const gardienDir = () => `${home()}/Library/Application Support/gardien/pending`;
 
 export default class CcStatus extends View {
   init(_props, cx) {
@@ -96,6 +98,11 @@ export default class CcStatus extends View {
       this.tick(cx);
     });
     cx.timer.every(60_000, (cx) => this.tick(cx));
+    // gardien approvals: the folder holds only requests.json, rewritten on every change.
+    cx.spawn(async () => {
+      try { await fs.stat(gardienDir()); } catch { return; } // no gardien: the minute tick still checks
+      for (;;) { await this.gardien(); await watchFolder(gardienDir()); }
+    });
     // `herdr-app do cc-status.linear` / `cc-status.github`: check now.
     cx.spawn(async (cx) => {
       for (;;) {
@@ -185,7 +192,16 @@ export default class CcStatus extends View {
     if (demo.standup) { this.su = ago(demo.standup); this.publishStandup({ running: false, asking: false }); }
   }
 
+  async gardien() {
+    let list = [];
+    try { list = JSON.parse(await fs.readFile(`${gardienDir()}/requests.json`, "utf8")); } catch {}
+    const now = Date.now();
+    list = Array.isArray(list) ? list.filter((p) => p && p.deadline_ms > now) : [];
+    if (!same(list, shared("cc.gardien") ?? [])) setShared("cc.gardien", list);
+  }
+
   tick(cx) {
+    this.gardien();
     if (this.settings.demo) { cx.notify(); return; }
     const st = this.settings, now = Date.now(), hour = new Date().getHours();
     cx.spawn(async () => { await this.readSettings(); if (!st.repoRoots) await this.findAutoRoots(); });
