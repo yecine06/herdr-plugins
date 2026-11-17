@@ -3,7 +3,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, panes, agents, shared, theme, run, exec, readTextFile, watchFolder, layout } from "herdr";
+import { spaces, panes, agents, shared, theme, run, exec, readTextFile, watchFolder, layout, home } from "herdr";
 
 const STEP = { done: ["✓", "done"], now: ["◐", "working"], todo: ["○", "dim"] };
 const KIND = { decision: ["DECISION", "accent"], assumption: ["ASSUMPTION", "working"], you_said: ["YOU SAID", "done"] };
@@ -64,7 +64,8 @@ export default class Tasks extends View {
         });
       }
       const root = this.roots[pane.cwd];
-      if (!root) continue;
+      const agent0 = agents().find((a) => a.tab === tab.id);
+      if (!root && !agent0) continue;
       const k = keyOf(pane.branch, space, tab);
       const agent = agents().find((a) => a.tab === tab.id);
       list.push({ ...k, tab, root, cwd: pane.cwd, branch: pane.branch, agent, machine: space.machine });
@@ -73,6 +74,7 @@ export default class Tasks extends View {
   }
 
   load(cx, task) {
+    if (!task.root) return;
     const dir = `${task.root}/.agents/tasks`;
     if (!this.watching.has(dir) && !task.machine) {
       this.watching.add(dir);
@@ -96,9 +98,25 @@ export default class Tasks extends View {
     });
   }
 
+  // Topic history of the Claude session in a tab, written by ~/.claude/hooks/session-topics.mjs under the terminal's address.
+  loadTopics(cx, task) {
+    const addr = task?.agent?.address;
+    if (!addr || task.machine) return;
+    const c = (this.topics ??= {})[addr];
+    if (c && Date.now() - c.at < 15_000) return;
+    this.topics[addr] = { at: Date.now(), data: c?.data ?? null };
+    cx.spawn(async (cx) => {
+      const text = await readTextFile(`${home()}/.claude/session-topics/by-terminal/${addr}.json`).catch(() => null);
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+      this.topics[addr] = { at: Date.now(), data };
+      cx.notify();
+    });
+  }
+
   loadChanges(cx, force) {
     const task = this.current;
-    if (!task || (!force && this.changes[task.key])) return;
+    if (!task?.root || (!force && this.changes[task.key])) return;
     this.changes[task.key] ??= { files: [], commits: 0 };
     cx.spawn(async (cx) => {
       const on = task.machine, cwd = task.cwd;
@@ -127,11 +145,19 @@ export default class Tasks extends View {
     const t = theme();
     const { space, list } = this.tasks(cx);
     const activeTab = space?.tabs.find((x) => x.active);
+    // Follow the tab you switch to; a click on a row still picks another one until the next switch.
+    if (activeTab?.id !== this.lastActive) {
+      this.lastActive = activeTab?.id;
+      const cur = list.find((x) => x.tab.id === activeTab?.id);
+      if (cur) this.selected = cur.key;
+    }
     if (!list.some((x) => x.key === this.selected)) this.selected = (list.find((x) => x.tab.id === activeTab?.id) ?? list[0])?.key ?? null;
     const task = list.find((x) => x.key === this.selected) ?? null;
     if (task?.key !== this.current?.key) { this.current = task; this.loadChanges(cx, false); }
     this.current = task;
     for (const x of list) this.load(cx, x);
+    this.loadTopics(cx, task);
+    const topics = task?.agent?.address ? this.topics?.[task.agent.address]?.data?.history : null;
     const s = task ? this.summaries[task.key]?.data : null;
     const changes = task ? this.changes[task.key] : null;
     const pr = task && (shared("cc.github")?.prs ?? []).find((p) => p.branch === task.branch);
@@ -163,6 +189,11 @@ export default class Tasks extends View {
           .child(div().text_size(11).font_semibold().text_color(t.blocked).child("WAITING ON YOU"))
           .child(div().text_size(12.5).child(snippet))
           .child(h_flex().child(button("tk-open", "Open", true, () => run("agent.focus", { terminal: task.agent.address }))))] : []),
+        ...(topics?.length ? [v_flex().gap(3).child(label("TOPICS", div().text_size(11).text_color(t.dim).child(`${topics.length}`)))
+          .children(topics.slice().reverse().slice(0, 12).map((e, n) => h_flex().id(`tp-${n}`).gap(8).text_size(12.5)
+            .child(div().w(14).flex_none().text_color(n === 0 ? t.working : t.dim).child(n === 0 ? "◐" : "✓"))
+            .child(div().flex_1().min_w(0).text_color(n === 0 ? t.foreground : t.muted).child(e.title))
+            .child(div().flex_none().text_size(11).text_color(t.dim).child(ago(e.at)))))] : []),
         ...(!s ? [div().text_size(12.5).text_color(t.dim).child("No summary yet. It appears after the agent's next turn that changes code.")] : [
           v_flex().gap(4).child(label("GOAL")).child(div().text_size(12.5).text_color(t.foreground).child(s.goal)),
           ...(s.steps?.length ? [v_flex().gap(3)
@@ -196,7 +227,7 @@ export default class Tasks extends View {
         .child(div().text_size(11).text_color(t.dim).child(space?.name ?? "")))
       .when(list.length > 1, (el) => el.child(v_flex().flex_none().p(6).gap(1).border_b(1).border_color(t.border).children(list.map(listRow))))
       .child(v_flex().id("cc-tasks-body").flex_1().min_h(0).overflow_y_scrollbar().px(14).py(12).gap(14).children(body))
-      .when(Boolean(task), (el) => el.child(h_flex().flex_none().px(14).py(9).gap(8).items_center().border_t(1).border_color(t.border).bg(t.chrome)
+      .when(Boolean(task?.root), (el) => el.child(h_flex().flex_none().px(14).py(9).gap(8).items_center().border_t(1).border_color(t.border).bg(t.chrome)
         .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(s ? `Summary after ${s.turns} turn${s.turns === 1 ? "" : "s"}` : ""))
         .child(button("tk-diff", "Review diff", true, () => { run("tab.select", { id: task.tab.id }); run("layout.select", { stack: "panel-body", child: "changes" }); }))
         .child(button("tk-notes", "Open notes", false, () => exec("open", [`${task.root}/.agents/tasks/${task.file}`])))));
