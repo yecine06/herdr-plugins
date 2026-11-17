@@ -10,6 +10,7 @@ import { readState, loadConfig } from "./state.js";
 const PANELS = [
   { id: "asks", label: "Asks", icon: "mods/cc-tabs/asks.svg" },
   { id: "inbox", label: "Inbox", icon: "mods/cc-tabs/inbox.svg" },
+  { id: "gardien", label: "Gardien", icon: "mods/cc-tabs/shield.svg" },
   { id: "linear", label: "ClickUp", icon: "mods/cc-tabs/linear.svg" },
   { id: "tasks", label: "Tasks", icon: "mods/cc-tabs/tasks.svg" },
   { id: "plans", label: "Plan", icon: "mods/cc-plans/plan.svg" },

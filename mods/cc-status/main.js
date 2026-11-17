@@ -198,6 +198,9 @@ export default class CcStatus extends View {
     const now = Date.now();
     list = Array.isArray(list) ? list.filter((p) => p && p.deadline_ms > now) : [];
     if (!same(list, shared("cc.gardien") ?? [])) setShared("cc.gardien", list);
+    let history = [];
+    try { history = JSON.parse(await fs.readFile(`${gardienDir()}/history.json`, "utf8")); } catch {}
+    if (Array.isArray(history) && !same(history, shared("cc.gardien.history") ?? [])) setShared("cc.gardien.history", history);
   }
 
   tick(cx) {

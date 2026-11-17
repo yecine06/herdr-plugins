@@ -189,6 +189,13 @@
                       }
                     },
                     {
+                      "id": "gardien",
+                      "type": "block",
+                      "content": {
+                        "mod": "cc-gardien"
+                      }
+                    },
+                    {
                       "id": "linear",
                       "type": "block",
                       "content": {
