@@ -9,8 +9,13 @@ const COLUMNS = [
   { id: "needs", name: "Needs you", tone: "blocked" },
   { id: "progress", name: "In progress", tone: "working" },
   { id: "review", name: "In review", tone: "done" },
+  { id: "waiting", name: "Waiting", tone: "dim" },
   { id: "todo", name: "Todo", tone: "dim" },
 ];
+const COLUMN_OF = { started: "progress", review: "review", waiting: "waiting" };
+// What the start button does for a task nobody works on here, by its step (cc-status/clickup.mjs).
+// "none": someone else has to act, so no button.
+const STEP_LABEL = { dev: "Start", analyse: "Analyse", review: "Review", qa: "QA", mep: "MEP" };
 const PRIORITY = { 1: "Urgent", 2: "High" };
 
 function since(ms) {
@@ -67,7 +72,7 @@ export default class Board extends View {
     }
     for (const i of issues) {
       if (used.has(i.identifier) || i.stateType === "backlog") continue;
-      out.push({ key: `i-${i.identifier}`, column: i.stateType === "started" ? "progress" : i.stateType === "review" ? "review" : "todo", issue: i, title: i.title,
+      out.push({ key: `i-${i.identifier}`, column: COLUMN_OF[i.stateType] ?? "todo", issue: i, title: i.title,
         status: `${i.state}${PRIORITY[i.priority] ? ` · ${PRIORITY[i.priority]}` : ""} · not started here` });
     }
     return out;
@@ -123,7 +128,8 @@ export default class Board extends View {
       if (c.tab) actions.push(button(`open-${c.key}`, "Open", false, () => this.openTerminal(c)));
       if (c.pr?.ci === "fail") actions.push(button(`fix-${c.key}`, "Fix CI", true, () => this.fixCi(c)));
       if (c.pr) actions.push(button(`pr-${c.key}`, `PR #${c.pr.number}`, false, () => exec("open", [c.pr.url])));
-      if (!c.tab && c.issue) actions.push(button(`start-${c.key}`, c.issue.stateType === "review" ? "Review" : "Start", true, () => openOverlay({ mod: "cc-start", kind: "dialog", width: 640, props: { issue: c.issue } })));
+      const step = c.issue?.step ?? (c.issue?.stateType === "review" ? "review" : "dev");
+      if (!c.tab && c.issue && STEP_LABEL[step]) actions.push(button(`start-${c.key}`, STEP_LABEL[step], true, () => openOverlay({ mod: "cc-start", kind: "dialog", width: 640, props: { issue: c.issue } })));
       if (c.issue) actions.push(button(`lin-${c.key}`, "ClickUp", false, () => exec("open", [c.issue.url])));
       return v_flex().id(c.key).w_full().p(10).gap(6).rounded(8).bg(t.background).border_1()
         .border_color(selected ? t.accent : c.column === "needs" ? t.blocked : t.border)

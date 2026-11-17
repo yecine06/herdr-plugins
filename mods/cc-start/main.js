@@ -1,5 +1,5 @@
 // Start from a ClickUp task: a worktree (or a tab) with an agent whose first message is the issue.
-// A task in review opens a review instead: a tab where the code already is, its status left alone.
+// A task past or before development (analysis, review, QA, release) opens a tab for that step, status left alone.
 // props: { issue, overlay }
 
 import { View, div } from "gpui-kit";
@@ -28,14 +28,25 @@ const MODES = [
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
 const shortTitle = (s) => s.split(/\s+/).reduce((acc, w) => (acc.length + w.length < 26 ? `${acc} ${w}`.trim() : acc), "");
 
-function firstMessage(i) {
-  const about = (i.description ?? "").trim();
-  return `Work on ${i.identifier}: ${i.title}\n${i.url}\n${about ? `\n${about}\n` : ""}\nKeep notes on your plan, decisions and assumptions as you go. When done, open a PR titled "${i.identifier}: …" and stop.`;
-}
+// What starting a task means depends on its step (cc-status/clickup.mjs): only "dev" codes, gets a worktree
+// and moves the task to in progress; the others open a tab and leave the status alone.
+const STEPS = {
+  dev: { button: "Start", verb: "Work on",
+    ask: (i) => `Keep notes on your plan, decisions and assumptions as you go. When done, open a PR titled "${i.identifier}: …" and stop.` },
+  analyse: { button: "Start analysis", verb: "Analyse",
+    ask: (i) => `This task is at "${i.state}": nothing is coded yet. Read the task and the code it touches, then give: what is asked and what is unclear, the repos and files involved, an approach, the risks, the questions to ask, and an estimate. Do not write code or change the task's status.` },
+  review: { button: "Start review", verb: "Review",
+    ask: (i) => `Find the merge requests for this task (branch or title containing ${i.identifier}) in the repos of this folder. Review them against the task: correctness, missing cases, tests. Report your findings, most severe first. Do not push, merge or change the task's status.` },
+  qa: { button: "Start QA", verb: "QA for",
+    ask: (i) => `This task is at "${i.state}": the change has to be checked before it moves on. Find its merge requests (branch or title containing ${i.identifier}) and where it is deployed. List the checks that prove each acceptance criterion, including edge cases and regressions; run those you can (tests, API calls, database reads, logs) and leave the others as steps for a human. Report each check as passed, failed or not run, with its evidence. Do not change code or the task's status.` },
+  mep: { button: "Start MEP", verb: "Release",
+    ask: (i) => `This task is at "${i.state}". Run /mep for the repos it touches: check what is waiting to be promoted and that ${i.identifier} is in it, then follow the skill. Stop before any production action and ask me.` },
+};
+const stepOf = (i) => (STEPS[i.step] ? i.step : i.stateType === "review" ? "review" : "dev");
 
-function reviewMessage(i) {
+function firstMessage(i, step) {
   const about = (i.description ?? "").trim();
-  return `Review ${i.identifier}: ${i.title}\n${i.url}\n${about ? `\n${about}\n` : ""}\nFind the merge requests for this task (branch or title containing ${i.identifier}) in the repos of this folder. Review them against the task: correctness, missing cases, tests. Report your findings, most severe first. Do not push, merge or change the task's status.`;
+  return `${STEPS[step].verb} ${i.identifier}: ${i.title}\n${i.url}\n${about ? `\n${about}\n` : ""}\n${STEPS[step].ask(i)}`;
 }
 
 // A folder that holds several repos side by side (a project split across repos) is offered as one entry.
@@ -52,15 +63,16 @@ export default class Start extends View {
   init(_props, cx) {
     const i = props()?.issue;
     if (!i) return;
-    this.review = i.stateType === "review";
-    this.where = this.review ? "tab" : "devflow";
+    this.step = stepOf(i);
+    this.dev = this.step === "dev";
+    this.where = this.dev ? "devflow" : "tab";
     this.mode = "plan";
     this.agent = "claude";
-    this.move = !this.review && i.stateType !== "started";
+    this.move = this.dev && i.stateType !== "started";
     this.repos = [];
     this.repo = null;
     this.agents = [{ key: "claude", name: "Claude Code", run: ["claude"] }, { key: "shell", name: "Shell", run: null }];
-    this.message = TextareaState.new({ value: this.review ? reviewMessage(i) : firstMessage(i), rows: 7 });
+    this.message = TextareaState.new({ value: firstMessage(i, this.step), rows: 7 });
     this.query = "";
     this.filter = InputState.new({ placeholder: "Filter repos" });
     this.filter.on("change", (_e, cx) => { this.query = this.filter.value().trim().toLowerCase(); cx.notify(); });
@@ -238,10 +250,10 @@ export default class Start extends View {
       .when(this.agent === "claude", (el) => el.child(label("START IN")).child(seg("mode", MODES, this.mode, (v) => { this.mode = v; })))
       .when(this.agent !== "shell", (el) => el.child(label("FIRST MESSAGE"))
         .child(Textarea.new(this.message).h(150).px(10).py(8).rounded(8).border_1().border_color(t.input).bg(t.background).text_size(12.5)))
-      .when(!this.review && i.stateType !== "started", (el) => el.child(div().pt(14).child(check("move", this.move, `Move ${i.identifier} to “en cours”`, () => { this.move = !this.move; }))))
+      .when(this.dev && i.stateType !== "started", (el) => el.child(div().pt(14).child(check("move", this.move, `Move ${i.identifier} to “en cours”`, () => { this.move = !this.move; }))))
       .child(h_flex().pt(18).gap(8).items_center()
         .child(div().flex_1().text_size(11.5).text_color(t.dim).child(`Opens a tab named “${i.identifier} ${shortTitle(i.title)}”`))
         .child(button("cs-cancel", "Cancel", false, () => closeOverlay(props().overlay)))
-        .child(button("cs-start", this.review ? "Start review" : "Start", true, () => this.start(), ready)));
+        .child(button("cs-start", STEPS[this.step].button, true, () => this.start(), ready)));
   }
 }

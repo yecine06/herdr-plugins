@@ -5,7 +5,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { spaces, panes, shared, setShared, theme, run, exec, openOverlay } from "herdr";
 
-const TYPE_RANK = { started: 0, review: 1, unstarted: 2, triage: 3, backlog: 4 };
+const TYPE_RANK = { started: 0, review: 1, unstarted: 2, waiting: 3, triage: 4, backlog: 5 };
 const PRIORITY = { 1: ["Urgent", "blocked"], 2: ["High", "working"] };
 
 // Case and accent blind, so "verifier" finds "vérifier".

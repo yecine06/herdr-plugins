@@ -12,20 +12,31 @@ import { join } from "node:path";
 const CLI = join(homedir(), ".local", "bin", "clickup-cli");
 const cli = (args) => JSON.parse(execFileSync(CLI, [...args, "--json"], { encoding: "utf8", timeout: 90_000, maxBuffer: 64 << 20 }));
 
-// ClickUp statuses are free text per list: map them onto the stages the panels know.
+// ClickUp statuses are free text per list: map each onto a stage (the board column) and a step (what
+// starting it means: dev, analyse, review, qa, mep, or none when someone else has to act).
 // Order matters: the first match wins.
 const STAGES = [
-  ["closed", /rejet|annul|abandon|termin|^done$|^complete/i],
-  ["review", /review|v[ée]rifier|tester|recette|mettre en prod/i],
-  ["started", /en cours|in progress|doing|en run/i],
-  ["backlog", /backlog/i],
+  ["closed", "none", /rejet|annul|abandon|termin|^done$|^complete|^ok client|^ferm/i],
+  // Sales pipeline lists (lead › proposal › …) are not development work.
+  ["ignored", "none", /^(lead|premiers meetings|proposal|negociation|projet lanc[ée])$/i],
+  ["review", "mep", /mettre en prod|^a mep$|^mep$|mise en prod/i],
+  ["review", "review", /review/i],
+  // QA: someone checks the change; the assignee is the one who does it.
+  ["review", "qa", /v[ée]rifi|tester|recette/i],
+  ["waiting", "none", /en attente|en cours client/i],
+  ["started", "analyse", /conception/i],
+  ["started", "dev", /en cours|in progress|doing|en run/i],
+  ["unstarted", "analyse", /qualifier|estimer|planifier/i],
+  ["backlog", "none", /backlog/i],
 ];
 const PRIORITY = { urgent: 1, high: 2, normal: 3, low: 4 };
 
-function stage(status, type) {
-  for (const [s, re] of STAGES) if (re.test(status)) return s;
-  return type === "closed" ? "closed" : type === "done" ? "review" : "unstarted";
+function classify(status, type) {
+  const s = status.trim();
+  for (const [stage, step, re] of STAGES) if (re.test(s)) return { stage, step };
+  return type === "closed" ? { stage: "closed", step: "none" } : type === "done" ? { stage: "review", step: "qa" } : { stage: "unstarted", step: "dev" };
 }
+const stage = (status, type) => classify(status, type).stage;
 
 function list() {
   const me = cli(["user", "me"]).data;
@@ -43,6 +54,7 @@ function list() {
     title: t.name,
     state: t["status.status"],
     stateType: stage(t["status.status"] ?? "", t["status.type"]),
+    step: classify(t["status.status"] ?? "", t["status.type"]).step,
     priority: PRIORITY[t["priority.priority"]] ?? 0,
     url: t.url,
     description: (t.text_content ?? "").slice(0, 600),
@@ -55,15 +67,17 @@ function list() {
     listId: String(t["list.id"] ?? ""),
     project: t["list.name"] ?? "",
     cycle: t["folder.hidden"] ? "" : t["folder.name"] ?? "",
-  })).filter((i) => i.stateType !== "closed");
+  })).filter((i) => i.stateType !== "closed" && i.stateType !== "ignored");
   return { connected: true, error: "", issues };
 }
 
-// The first status of the task's list whose name says it's in progress.
+// The list's development status: "en cours" itself, else "en cours de dev" or "en cours tech", else the
+// first in-progress status that is development (not design, not the client's turn).
 function start(taskId) {
   const task = cli(["tasks", "get", taskId]).data;
   const statuses = cli(["api", "GET", `/v2/list/${task.list.id}`]).data?.statuses ?? [];
-  const target = statuses.find((s) => stage(s.status, s.type) === "started");
+  const dev = statuses.filter((s) => { const c = classify(s.status, s.type); return c.stage === "started" && c.step === "dev"; });
+  const target = dev.find((s) => /^en cours$/i.test(s.status.trim())) ?? dev.find((s) => /dev|tech/i.test(s.status)) ?? dev[0];
   if (!target) throw new Error(`no in-progress status in list ${task.list.name}`);
   cli(["tasks", "update", taskId, "--status", target.status]);
   return { ok: true, status: target.status };
