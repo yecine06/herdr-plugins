@@ -9,12 +9,25 @@ import { extract, hints, ALPHABET } from "./extract.js";
 
 const FILTERS = [
   { id: "all", label: "All", keep: () => true },
-  { id: "links", label: "Links", keep: (i) => i.type === "url" || ((i.type === "ticket" || i.type === "mr") && i.url) },
+  { id: "links", label: "Links", keep: (i) => i.type === "url" || ((i.type === "ticket" && i.url) || i.type === "mr") },
   { id: "files", label: "Files", keep: (i) => i.type === "file" || i.type === "image" },
   { id: "refs", label: "Refs", keep: (i) => i.type === "hash" || i.type === "ip" || i.type === "ticket" || i.type === "mr" },
 ];
 const BADGE = { url: "URL", ticket: "TICKET", file: "FILE", image: "IMAGE", hash: "SHA", ip: "IP", mr: "MR" };
 const MAX_ROWS = 14;
+
+// "project!15" carries no URL on screen (the link target is hidden), so ask GitLab which project has that name.
+// Needs glab logged in; an ambiguous or unknown name is an error, never a guess.
+async function mrUrl(value) {
+  const [name, num] = value.split("!");
+  // Screen text is untrusted: validate it, and pass it as a positional parameter, never inside the shell string.
+  if (!/^[A-Za-z0-9_.-]+$/.test(name) || !/^\d+$/.test(num)) throw new Error(`Invalid MR reference: ${value}`);
+  const r = await exec("zsh", ["-lc", 'glab api "projects?search=$1&simple=true&per_page=50"', "zsh", encodeURIComponent(name)]);
+  if (r.code !== 0) throw new Error("glab couldn't search GitLab (logged in?)");
+  const hits = JSON.parse(r.stdout).filter((p) => p.path === name);
+  if (hits.length !== 1) throw new Error(hits.length ? `Several GitLab projects named ${name}` : `No GitLab project named ${name}`);
+  return `${hits[0].web_url}/-/merge_requests/${num}`;
+}
 
 export default class Hints extends View {
   init(_props, cx) {
@@ -71,7 +84,7 @@ export default class Hints extends View {
     if (!item || this.busy) return;
     // Files on a remote machine can't be opened here.
     const remote = this.terminal.includes("/");
-    if (copy || item.type === "hash" || item.type === "ip" || ((item.type === "ticket" || item.type === "mr") && !item.url) || (remote && item.file)) {
+    if (copy || item.type === "hash" || item.type === "ip" || (item.type === "ticket" && !item.url) || (remote && item.file)) {
       cx.write_to_clipboard(item.value);
       notify({ title: "Copied", body: item.value, timeout: 2 });
       return this.close();
@@ -82,6 +95,7 @@ export default class Hints extends View {
         // Screen text decides what opens, so never hand a path to the default handler: a folder named
         // "X.app" would launch. Folders are revealed in Finder, images forced into Preview.
         let args = [item.url ?? item.value];
+        if (item.type === "mr" && !item.url) args = [await mrUrl(item.value)];
         if (item.file) {
           const abs = this.resolve(item.file);
           if (!abs || (await exec("test", ["-e", abs])).code !== 0) throw new Error(`Not found from ${this.cwd ?? "this terminal"}: ${item.file}`);

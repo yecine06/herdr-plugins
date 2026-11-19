@@ -81,7 +81,9 @@ export function extract(text, cols, trackers = {}, mrs = {}) {
     // Right to left within a line, matching the bottom-up order.
     found.sort((a, b) => b.at - a.at).forEach(({ at, ...item }) => add(item));
   }
-  return items;
+  // A name wrapped at its hyphen ("pubsub-" / "iac!15") leaves a tail that is not a project of its own.
+  const mrs_ = items.filter((i) => i.type === "mr");
+  return items.filter((i) => i.type !== "mr" || !mrs_.some((o) => o !== i && o.value.endsWith("-" + i.value)));
 }
 
 // Prefix-free labels: single letters while they suffice, then two letters for everything.
