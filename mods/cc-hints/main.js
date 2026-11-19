@@ -9,11 +9,11 @@ import { extract, hints, ALPHABET } from "./extract.js";
 
 const FILTERS = [
   { id: "all", label: "All", keep: () => true },
-  { id: "links", label: "Links", keep: (i) => i.type === "url" || (i.type === "ticket" && i.url) },
+  { id: "links", label: "Links", keep: (i) => i.type === "url" || ((i.type === "ticket" || i.type === "mr") && i.url) },
   { id: "files", label: "Files", keep: (i) => i.type === "file" || i.type === "image" },
-  { id: "refs", label: "Refs", keep: (i) => i.type === "hash" || i.type === "ip" || i.type === "ticket" },
+  { id: "refs", label: "Refs", keep: (i) => i.type === "hash" || i.type === "ip" || i.type === "ticket" || i.type === "mr" },
 ];
-const BADGE = { url: "URL", ticket: "TICKET", file: "FILE", image: "IMAGE", hash: "SHA", ip: "IP" };
+const BADGE = { url: "URL", ticket: "TICKET", file: "FILE", image: "IMAGE", hash: "SHA", ip: "IP", mr: "MR" };
 const MAX_ROWS = 14;
 
 export default class Hints extends View {
@@ -38,10 +38,10 @@ export default class Hints extends View {
         const screen = JSON.parse(read.stdout);
         const meta = info.code === 0 ? JSON.parse(info.stdout) : {};
         // Tracker URLs hold workspace IDs, so they live in the app folder, not in this repo.
-        let trackers = {};
-        try { trackers = JSON.parse((await readTextFile(`${appHome()}/hints.json`)) ?? "{}").trackers ?? {}; } catch {}
+        let trackers = {}, mrs = {};
+        try { { const cfg = JSON.parse((await readTextFile(`${appHome()}/hints.json`)) ?? "{}"); trackers = cfg.trackers ?? {}; mrs = cfg.mrs ?? {}; } } catch {}
         this.cwd = meta.foreground?.cwd ?? meta.cwd;
-        this.items = extract(screen.text ?? "", meta.cols, trackers);
+        this.items = extract(screen.text ?? "", meta.cols, trackers, mrs);
       } catch (e) {
         this.error = e?.message ?? "Couldn't read this terminal.";
       }
@@ -71,7 +71,7 @@ export default class Hints extends View {
     if (!item || this.busy) return;
     // Files on a remote machine can't be opened here.
     const remote = this.terminal.includes("/");
-    if (copy || item.type === "hash" || item.type === "ip" || (item.type === "ticket" && !item.url) || (remote && item.file)) {
+    if (copy || item.type === "hash" || item.type === "ip" || ((item.type === "ticket" || item.type === "mr") && !item.url) || (remote && item.file)) {
       cx.write_to_clipboard(item.value);
       notify({ title: "Copied", body: item.value, timeout: 2 });
       return this.close();

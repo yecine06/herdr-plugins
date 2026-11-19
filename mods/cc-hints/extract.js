@@ -7,6 +7,8 @@ export const ALPHABET = "asdfjklghqwertyuiopzxcvbnm";
 const URL_RE = /\bhttps?:\/\/[^\s<>"'`|│]+/g;
 const PATH_RE = /(?:~|\.{1,2})?\/?(?:[\w.@+-]+\/)+[\w.@+-]+(?::\d+(?::\d+)?)?|\b[\w.-]+\.[A-Za-z]\w{0,9}:\d+(?::\d+)?/g;
 const TICKET_RE = /\b[A-Z][A-Z0-9]{1,9}-\d{1,7}\b/g;
+// "pubsub-iac!15": a GitLab merge request, project short name + "!" + number.
+const MR_RE = /\b[a-z][\w.-]*!\d{1,6}\b/g;
 const SHA_RE = /\b[0-9a-f]{7,40}\b/g;
 const IP_RE = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{2,5})?\b/g;
 
@@ -43,9 +45,10 @@ function pathKind(raw) {
 }
 
 // Items from the bottom of the screen up, so the most recent output gets the first hints.
+// mrs: { project: "https://gitlab/.../project/-/merge_requests/" }, same rule: unlisted projects are only copied.
 // trackers: { PREFIX: "https://tracker/base/" }, read from the app's hints.json, never from the code.
 // A ticket whose prefix is listed opens at base + key; any other KEY-123 is only copied.
-export function extract(text, cols, trackers = {}) {
+export function extract(text, cols, trackers = {}, mrs = {}) {
   const seen = new Set();
   const items = [];
   const add = (item) => {
@@ -71,6 +74,7 @@ export function extract(text, cols, trackers = {}) {
     };
     scan(URL_RE, (v) => ({ type: "url", value: v }));
     scan(PATH_RE, pathKind);
+    scan(MR_RE, (v) => ({ type: "mr", value: v, url: mrs[v.split("!")[0]] ? mrs[v.split("!")[0]] + v.split("!")[1] : undefined }));
     scan(TICKET_RE, (v) => ({ type: "ticket", value: v, url: trackers[v.split("-")[0]] ? trackers[v.split("-")[0]] + v : undefined }));
     scan(IP_RE, (v) => ({ type: "ip", value: v }));
     scan(SHA_RE, (v) => (/[a-f]/.test(v) && /\d/.test(v) ? { type: "hash", value: v } : null));
